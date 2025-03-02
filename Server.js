@@ -26,7 +26,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
-      "https://dev-connect-1.vercel.app",
+      "https://devconnect-backend-6opy.onrender.com",
       "http://192.168.29.189:5173",
     ],
     credentials: true,
