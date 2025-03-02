@@ -206,7 +206,7 @@ export const loginUser = async (req, res) => {
     const token = jwt.sign(
       { userId: user._id, email: user.email },
       SECRET_KEY,
-      { expiresIn: null }
+      // { expiresIn: null }
     );
 
     res.status(200).json({
@@ -218,8 +218,10 @@ export const loginUser = async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ message: "Error during login", error });
+    console.error("Login error:", error); // Log full error
+    res.status(500).json({ message: "Error during login", error: error.toString() });
   }
+  
 };
 
 /**
