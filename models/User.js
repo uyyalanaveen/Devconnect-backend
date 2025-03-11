@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 const UserSchema = new mongoose.Schema({
-    fullname: { type: String, required: false },
+    fullname: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
     profileImage: { type: String, default: "https://res.cloudinary.com/dbpgevghy/image/upload/v1739248882/DevConnect-Profiles/default-profile_wg8arj.png" },

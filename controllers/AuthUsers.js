@@ -33,9 +33,9 @@ export const addUser = async (req, res) => {
     const token = jwt.sign(
       { id: newUser._id, email: newUser.email },
       SECRET_KEY,
-      { expiresIn: null }
+      // { expiresIn: "7d" } // Valid expiry (7 days)
     );
-
+    console.log(token)    
     res.status(201).json({
       message: "User created successfully",
       user: {
@@ -46,8 +46,10 @@ export const addUser = async (req, res) => {
       token,
     });
   } catch (error) {
-    res.status(500).json({ message: "Error creating user", error });
+    console.error("❌ Error creating user:", error); // Log full error
+    res.status(500).json({ message: "Error creating user", error: error.message });
   }
+  
 };
 
 // get all users
@@ -153,30 +155,39 @@ export const getUser = async (req, res) => {
 /**
  * Get user by ID
  */
-
 export const getUserById = async (req, res) => {
   const { id } = req.params;
+
   if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({ message: "Invalid user ID format" });
   }
+
   try {
-    const user = await User.findById(id).select("-password");
+    const user = await User.findById(id)
+      .select("-password") // Exclude password
+      .populate("followers", "fullname profileImage") // Populate followers with specific fields
+      .populate("following", "fullname profileImage"); // Populate following with specific fields
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const profileImage = user.profileImage.startsWith('http')
-      ? user.profileImage // If already a full URL
-      : `${req.protocol}://${req.get("host")}/${user.profileImage}`; // Assuming local storage
+    const profileImage = user.profileImage.startsWith("http")
+      ? user.profileImage
+      : `${req.protocol}://${req.get("host")}/${user.profileImage}`;
 
     res.status(200).json({
       id: user._id,
       fullname: user.fullname,
       email: user.email,
       profileImage,
+      followers: user.followers, // Now populated with user details
+      following: user.following, // Now populated with user details
+      techStack: user.techStack || [], // Ensure it always returns an array
+      bio: user.bio || "", // Ensure bio is always returned
     });
   } catch (error) {
-    console.error(error); // Optional: log the error for debugging purposes
+    console.error(error);
     res.status(500).json({ message: "Error fetching user", error: error.message });
   }
 };

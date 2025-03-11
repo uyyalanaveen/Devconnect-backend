@@ -1,6 +1,8 @@
 import Room from "../models/Room.js";
 import User from "../models/User.js";
 import mongoose from "mongoose";
+// import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 
 /**
  * @desc    Create a new room
@@ -9,17 +11,36 @@ import mongoose from "mongoose";
  */
 export const createRoom = async (req, res) => {
   try {
-    const { name, description, technology, maxParticipants, isPrivate } = req.body;
+    const {
+      name,
+      description,
+      technology,
+      maxParticipants,
+      isPrivate,
+      password,
+    } = req.body;
+
     if (!name || !technology || maxParticipants === undefined) {
-      return res.status(400).json({ message: "Name, technology, and maxParticipants are required." });
+      return res
+        .status(400)
+        .json({
+          message: "Name, technology, and maxParticipants are required.",
+        });
     }
+
+    if (isPrivate && !password) {
+      return res
+        .status(400)
+        .json({ message: "Password is required for private rooms." });
+    }
+
     const newRoom = new Room({
       name,
       description,
       technology,
       maxParticipants,
       isPrivate,
-      allowedUsers: isPrivate ? req.body.allowedUsers || [] : [],
+      password,
       createdBy: req.user.userId,
       participants: [],
     });
@@ -30,10 +51,18 @@ export const createRoom = async (req, res) => {
       .populate("createdBy", "fullname email")
       .populate("participants", "fullname email");
 
-    return res.status(201).json({ message: "Room created successfully", room: populatedRoom });
+    // Don't send the password back to the client
+    const roomToReturn = populatedRoom.toObject();
+    delete roomToReturn.password;
+
+    return res
+      .status(201)
+      .json({ message: "Room created successfully", room: roomToReturn });
   } catch (error) {
     console.error("Error creating room:", error);
-    return res.status(500).json({ message: "Server error", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
   }
 };
 
@@ -48,39 +77,49 @@ export const joinRoom = async (req, res) => {
 
   try {
     const { id: newRoomId } = req.params;
-    const userId = req.user?.userId; // Extract user ID from request
+    const { password } = req.body;
+    const userId = req.user?.userId;
 
     if (!userId) throw new Error("User ID is missing or invalid.");
 
-    // ✅ Check if the new room exists
-    const newRoom = await Room.findById(newRoomId).session(session);
+    // Fetch the room without selecting the password
+    const newRoom = await Room.findById(newRoomId)
+      .select("+password")
+      .session(session);
+    console.log("Room Password from DB:", newRoom.password); // Debugging line
+
     if (!newRoom) throw new Error("Room not found.");
 
-    // ✅ Check if the user exists
-    const user = await User.findById(userId).session(session);
-    if (!user) throw new Error("User not found.");
-
-    // ✅ Check if the user is already in a different room & remove them
-    const currentRoom = await Room.findOne({ "participants.userId": userId }).session(session);
+    // Remove user from the previous room
+    const currentRoom = await Room.findOne({
+      "participants.userId": userId,
+    }).session(session);
     if (currentRoom) {
-      currentRoom.participants = currentRoom.participants.filter((p) => p.userId.toString() !== userId);
+      currentRoom.participants = currentRoom.participants.filter(
+        (p) => p.userId.toString() !== userId
+      );
       await currentRoom.save({ session });
-
-      // Remove the room from the user's joined rooms
-      await User.findByIdAndUpdate(userId, { $pull: { rooms: currentRoom._id } }, { session });
+      await User.findByIdAndUpdate(
+        userId,
+        { $pull: { rooms: currentRoom._id } },
+        { session }
+      );
     }
 
-    // ✅ Add the user to the new room (prevent duplicates)
-    const alreadyJoined = newRoom.participants.some((p) => p.userId.toString() === userId);
-    if (!alreadyJoined) {
-      newRoom.participants.push({ userId });
-      await newRoom.save({ session });
-    }
+    // Call `addParticipant()` which handles password validation internally
+    await newRoom.addParticipant(
+      { _id: userId, fullname: req.user.fullname },
+      password
+    );
 
-    // ✅ Update the user's room list
-    await User.findByIdAndUpdate(userId, { $addToSet: { rooms: newRoomId } }, { session });
+    // Update the user's room list
+    await User.findByIdAndUpdate(
+      userId,
+      { $addToSet: { rooms: newRoomId } },
+      { session }
+    );
 
-    // ✅ Fetch updated room details (inside session)
+    // Fetch updated room details
     const updatedRoom = await Room.findById(newRoomId)
       .session(session)
       .populate("participants.userId", "fullname profileImage")
@@ -89,7 +128,9 @@ export const joinRoom = async (req, res) => {
     await session.commitTransaction();
     session.endSession();
 
-    res.status(200).json({ message: "Successfully joined the room.", room: updatedRoom });
+    res
+      .status(200)
+      .json({ message: "Successfully joined the room.", room: updatedRoom });
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
@@ -97,6 +138,7 @@ export const joinRoom = async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 };
+
 export const getRoomById = async (req, res) => {
   try {
     const { id: roomId } = req.params;
@@ -131,7 +173,9 @@ export const getAllRooms = async (req, res) => {
     return res.status(200).json({ rooms });
   } catch (error) {
     console.error("Error fetching rooms:", error);
-    return res.status(500).json({ message: "Failed to fetch rooms.", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Failed to fetch rooms.", error: error.message });
   }
 };
 
@@ -146,10 +190,12 @@ export const leaveRoom = async (req, res) => {
     console.log("Request User:", req.user);
 
     const { id: roomId } = req.params;
-    const userId = req.user?.userId;  // 🔴 Possible issue
+    const userId = req.user?.userId; // 🔴 Possible issue
 
     if (!roomId || !userId) {
-      return res.status(400).json({ message: "Room ID and User ID are required." });
+      return res
+        .status(400)
+        .json({ message: "Room ID and User ID are required." });
     }
 
     const room = await Room.findById(roomId);
@@ -158,7 +204,9 @@ export const leaveRoom = async (req, res) => {
     }
 
     const userIdStr = userId.toString();
-    const updatedParticipants = room.participants.filter((p) => p.userId && p.userId.toString() !== userIdStr);
+    const updatedParticipants = room.participants.filter(
+      (p) => p.userId && p.userId.toString() !== userIdStr
+    );
 
     if (updatedParticipants.length === room.participants.length) {
       return res.status(400).json({ message: "User is not in this room." });
@@ -171,10 +219,13 @@ export const leaveRoom = async (req, res) => {
     }
 
     await room.save();
-    return res.status(200).json({ message: "User left the room successfully." });
+    return res
+      .status(200)
+      .json({ message: "User left the room successfully." });
   } catch (error) {
     console.error("Error leaving room:", error);
-    return res.status(500).json({ message: error.message || "Internal Server Error" });
+    return res
+      .status(500)
+      .json({ message: error.message || "Internal Server Error" });
   }
 };
-
